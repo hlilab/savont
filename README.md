@@ -1,6 +1,6 @@
 # savont - Amplicon Sequence Variants (ASVs) and taxonomic profiling for long read amplicons
 
-**Savont** generates [**Amplicon Sequence Variants (ASVs)**](https://en.wikipedia.org/wiki/Amplicon_sequence_variant) for taxonomic profiling using amplicon sequencing data from either
+**Savont** generates [**Amplicon Sequence Variants (ASVs)**](https://en.wikipedia.org/wiki/Amplicon_sequence_variant) at **single-nucleotide resolution** from long-read amplicon sequencing data such as
 
 - Oxford Nanopore (ONT) R10.4 sequencing (preferably with SUP basecalling)
 - PacBio HiFi sequencing
@@ -9,22 +9,9 @@ Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow)
 
 ## Why savont?
 
-At the cost of some sensitivity, using ASVs can lead to 
-
-1. more confident species classifications
-2. avoids misclassification against incomplete databases
-3. better interpretability for downstream analysis
-
-Savont also has built-in support for full taxonomic profiling (amplicons -> abundances) for SILVA and EMU rRNA databases.
-
-## What are savont's inputs and outputs? 
-
-Savont is designed for high-accuracy long-read amplicon sequencing (>98% accuracy). It can:
-
-* Generate high-resolution ASVs from ONT R10.4 or PacBio HiFi amplicon reads (e.g., full-length 16S or rRNA operon)
-* Classify ASVs against EMU or SILVA reference databases
-* Output species-level and genus-level taxonomic abundance tables
-* Provide detailed ASV mapping information for quality control
+- Savont can separate ASVs that differ by a single nucleotide. This differs from existing long-read workflows that do fuzzy OTU-like clustering.
+- For long amplicons, savont requires ~10x less depth to generate ASVs compared to DADA2 / UNOISE.
+- Savont also has built-in support for full taxonomic profiling (fastq -> abundance table) for several rRNA databases. 
 
 > [!NOTE]
 > Savont is optimized for long reads with >98% accuracy. R10.4 SUP ONT reads or HiFi are preferred.
@@ -73,6 +60,8 @@ mamba install -c bioconda savont
 
 ### Step 1: Generate ASVs from reads
 
+> [!NOTE]
+> Savont does not do adapter/primer trimming or quality control. Please QC your reads with e.g. [cutadapt](https://cutadapt.readthedocs.io/en/stable/) first. 
 ```sh
 # Full-length 16S rRNA reads -> ASVs
 savont asv 16s_full-length.fastq.gz -o savont-out -t 20 
