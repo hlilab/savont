@@ -2,6 +2,23 @@
 
 All notable changes to savont will be documented in this file.
 
+## [0.4.0] - 2026-04-28
+
+### Changed
+
+- **Classify / Download command** usage changed. Databases are refactored, download logic are changed, and greengenes2 is added. 
+- Tax IDs are removed from `species_abundance.tsv`. 
+
+### Added
+
+- **`savont sintax` command**: new k-mer bootstrap classification subcommand implementing the SINTAX algorithm for genus-level taxonomic classification. Uses 12-mers with 100 bootstrap iterations (32 k-mers sampled per iteration) to produce per-rank confidence scores. Key options: `--min-bootstrap` (default 0.8), `--n-iter` (default 100).
+- **GreenGenes2 2024.09 database**: support for the GreenGenes2 species-level trainset via `savont download --dbs greengenes2-2024.09`. Ranks missing annotation are reported as `Greengenes_unannotated`.
+- **Multiple database downloads**: `savont download --dbs` now accepts multiple database keywords in one invocation.
+- **Auto-detection of database type**: `savont classify` and `savont sintax` auto-detect the database type from a `.savont_db` marker file or the directory name, removing the need to specify the database format manually.
+- **`--detailed-unclassified` flag** for `savont classify` and `savont sintax`: outputs `UNCLASSIFIED-(asv_header)` instead of `UNCLASSIFIED` for ranks below the confidence threshold. Previously, `...-(asv_header)` was the standard behavior. 
+- **`feature-table.tsv` output** from `savont asv`: QIIME2-compatible feature table (TSV format) written alongside `final_asvs.fasta`. Import with `biom convert` and `qiime tools import --type 'FeatureTable[Frequency]'`.
+
+
 ## [0.3.2] - 2025-1-10
 
 ### Added

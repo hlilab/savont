@@ -6,6 +6,7 @@ use savont::cli;
 use savont::constants::*;
 use savont::kmer_comp;
 use savont::classify;
+use savont::sintax;
 use savont::seeding;
 use savont::seq_parse;
 use savont::types;
@@ -14,7 +15,7 @@ use savont::types::ConsensusSequence;
 use savont::types::decode_kmer48;
 use savont::utils::*;
 use savont::chimera;
-use savont::taxonomy;
+use savont::databases;
 use savont::download;
 use std::path::Path;
 use std::path::PathBuf;
@@ -34,6 +35,9 @@ fn main() {
         }
         cli::Commands::Download(download_args) => {
             run_download(download_args, &args);
+        }
+        cli::Commands::Sintax(sintax_args) => {
+            run_sintax(sintax_args, &args);
         }
     }
 }
@@ -140,6 +144,16 @@ fn run_cluster(args: &cli::ClusterArgs, cli_args: &cli::Cli) {
         .expect(format!("Failed to write {}", ASV_FILE).as_str());
     log::info!("Wrote {} final consensus sequences to {}", consensuses.len(), ASV_FILE);
 
+    // Write QIIME2-compatible feature table
+    let sample_name = Path::new(&args.input_files[0])
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("sample");
+    let feature_table = output_dir.join("feature-table.tsv");
+    write_feature_table(&consensuses, &feature_table, sample_name)
+        .expect("Failed to write feature-table.tsv");
+    log::info!("Wrote feature-table.tsv (QIIME2-compatible)");
+
     debug_consensus_twin_read(&kmer_info, &consensuses, &args);
 
     // Write final cluster information
@@ -150,29 +164,59 @@ fn run_cluster(args: &cli::ClusterArgs, cli_args: &cli::Cli) {
 }
 
 fn run_classify(args: &cli::ClassifyArgs, cli_args: &cli::Cli) {
-    // Initialize output directory and logger
     let _output_dir = initialize_setup_classify(args, cli_args);
 
     log::info!("Starting classification...");
-    let db;
-    if let Some(db_path) = &args.db_type.emu_db {
-        log::info!("Using EMU database at {}", db_path);
-        db = taxonomy::Database::load_emu(Path::new(db_path))
-            .expect("Failed to load EMU database");
+    let db_path = Path::new(&args.db);
+    let db = databases::load_database(db_path)
+        .unwrap_or_else(|e| {
+            log::error!("{}", e);
+            std::process::exit(1);
+        });
+
+    classify::classify(args, &db);
+}
+
+fn run_sintax(args: &cli::SintaxArgs, cli_args: &cli::Cli) {
+    let output_dir = if let Some(ref dir) = args.output_dir {
+        Path::new(dir).to_path_buf()
+    } else {
+        Path::new(&args.input_dir).to_path_buf()
+    };
+
+    if !output_dir.exists() {
+        std::fs::create_dir_all(&output_dir).expect("Could not create output directory");
     }
-    else if let Some(silva_path) = &args.db_type.silva_db {
-        log::info!("Using Silva database at {}", silva_path);
-        db = taxonomy::Database::load_silva(Path::new(silva_path))
-            .expect("Failed to load Silva database");
-    }
-    else {
-        log::error!("No database specified for classification. Use --emu-db or --silva-db.");
+
+    let log_spec = format!("{},skani=info", cli_args.log_level_filter().to_string());
+    let filespec = FileSpec::default().directory(&output_dir).basename("savont_sintax");
+    let _logger_handle = flexi_logger::Logger::try_with_str(log_spec)
+        .expect("Something went wrong with logging")
+        .log_to_file(filespec)
+        .duplicate_to_stderr(Duplicate::Info)
+        .format(my_own_format_colored)
+        .format_for_files(my_own_format)
+        .create_symlink("savont_sintax_latest.log")
+        .start()
+        .expect("Something went wrong with creating log file");
+
+    let command_args: Vec<String> = std::env::args().collect();
+    log::info!("COMMAND: {}", command_args.join(" "));
+    log::info!("VERSION: {}", env!("CARGO_PKG_VERSION"));
+
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(args.threads)
+        .stack_size(16 * 1024 * 1024)
+        .build_global()
+        .unwrap();
+
+    let db_path = Path::new(&args.db);
+    let db = databases::load_database(db_path).unwrap_or_else(|e| {
+        log::error!("{}", e);
         std::process::exit(1);
+    });
 
-    }
-
-    classify::classify(&args, &db);
-
+    sintax::sintax(args, &db);
 }
 
 fn run_download(args: &cli::DownloadArgs, cli_args: &cli::Cli) {
@@ -275,6 +319,22 @@ fn my_own_format(
     )
 }
 
+fn write_feature_table(
+    consensuses: &[types::ConsensusSequence],
+    path: &Path,
+    sample_name: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    writeln!(f, "# Constructed from savont")?;
+    writeln!(f, "#OTU ID\t{}", sample_name)?;
+    for (i, c) in consensuses.iter().enumerate() {
+        let depth = c.depth + c.appended_depth;
+        writeln!(f, "final_consensus_{}_depth_{}\t{}", i, depth, depth)?;
+    }
+    Ok(())
+}
+
 fn initialize_setup_cluster(args: &mut cli::ClusterArgs, cli_args: &cli::Cli) -> PathBuf {
 
     if args.markdown_help {
@@ -342,6 +402,11 @@ fn initialize_setup_cluster(args: &mut cli::ClusterArgs, cli_args: &cli::Cli) ->
         log::info!("=== PRESET: Using rRNA operon preset. Adjusting parameters... ===");
         args.min_read_length = 3500;
         args.max_read_length = 5000;
+    }
+
+    if args.hifi{
+        log::info!("=== PRESET: Using PacBio HiFi preset. Adjusting parameters... ===");
+        args.min_cluster_size = 6;
     }
 
     // Initialize thread pool, bigger stack size because sorting k-mers fails otherwise...

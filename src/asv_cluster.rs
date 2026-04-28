@@ -2,6 +2,7 @@ use crate::cli::ClusterArgs as Cli;
 use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use crate::types::*;
+use crate::constants::{LSH_NUM_TABLES};
 use fxhash::FxHashMap;
 use std::collections::HashMap;
 use std::io::Write;
@@ -80,15 +81,13 @@ pub fn cluster_reads_by_kmers(
 
     // MinHash LSH parameters
     let use_bucketed = true;  // Flag to enable/disable bucketed approach
-    let num_hash_tables = 20; // Number of hash functions
-    let bucket_size = 3;      // Number of minimizers per bucket
     let top_n_candidates = 10; // Number of top candidates to verify
 
     // Inverted index: kmer -> Vec<read_id>
     let mut index: FxHashMap<Kmer48, Vec<usize>> = FxHashMap::default();
 
     // Bucket index for LSH
-    let mut bucket_index: BucketIndex = vec![FxHashMap::default(); num_hash_tables];
+    let mut bucket_index: BucketIndex = vec![FxHashMap::default(); LSH_NUM_TABLES];
 
     // Cluster assignments: read_id -> representative_read_id
     let cluster_assignment: Mutex<HashMap<usize, usize>> = Mutex::new(HashMap::new());
@@ -102,14 +101,14 @@ pub fn cluster_reads_by_kmers(
 
         let best_rep = if use_bucketed {
             // Use bucketed LSH approach
-            let bucket_hits = query_read_against_bucket_index(&bucket_index, &read_kmers, bucket_size);
+            let bucket_hits = query_read_against_bucket_index(&bucket_index, &read.lsh_signatures);
 
             if bucket_hits.is_empty() {
                 None
             } else {
                 // Get top candidates sorted by number of bucket hits
                 let mut candidates: Vec<(usize, usize)> = bucket_hits.into_iter().collect();
-                candidates.sort_by(|a, b| (b.1, b.0).cmp(&(a.1, a.0))); // Sort by hits descending
+                candidates.par_sort_by(|a, b| (b.1, b.0).cmp(&(a.1, a.0))); // Sort by hits descending
                 //println!("Top candidates for read {}: {:?}", read_id, &candidates[..candidates.len().min(5)]);
 
                 // Find the maximum number of hits
@@ -176,9 +175,11 @@ pub fn cluster_reads_by_kmers(
             cluster_assignment.lock().unwrap().insert(read_id, rep_id);
         } else {
             // No match found - this read becomes a new representative
-            add_read_to_index(&mut index, read_id, &read_kmers);
             if use_bucketed {
-                add_read_to_bucket_index(&mut bucket_index, read_id, &read_kmers, bucket_size);
+                add_read_to_bucket_index(&mut bucket_index, read_id, &read.lsh_signatures);
+            }
+            else{
+                add_read_to_index(&mut index, read_id, &read_kmers);
             }
             cluster_assignment.lock().unwrap().insert(read_id, read_id); // Represents itself
             representatives.push(read_id);
@@ -252,7 +253,7 @@ type BucketIndex = Vec<FxHashMap<u64, Vec<usize>>>;
 
 /// Create bucket signature from minimizers using a specific hash seed
 /// Takes the bottom `bucket_size` minimizers after hashing and combines them into a single u64
-fn create_bucket_signature(minimizers: &[Kmer48], hash_seed: u64, bucket_size: usize) -> Option<u64> {
+fn _create_bucket_signature(minimizers: &[Kmer48], hash_seed: u64, bucket_size: usize) -> Option<u64> {
     if minimizers.len() < bucket_size {
         return None;
     }
@@ -283,43 +284,36 @@ fn create_bucket_signature(minimizers: &[Kmer48], hash_seed: u64, bucket_size: u
     Some(signature)
 }
 
-/// Add a representative read to the bucket index
+/// Add a representative read to the bucket index using its precomputed LSH signatures
 fn add_read_to_bucket_index(
     bucket_index: &mut BucketIndex,
     read_id: usize,
-    minimizers: &[Kmer48],
-    bucket_size: usize,
+    signatures: &[Option<u64>],
 ) {
-    let _num_tables = bucket_index.len();
-
     for (table_idx, table) in bucket_index.iter_mut().enumerate() {
-        let hash_seed = table_idx as u64;
-        if let Some(signature) = create_bucket_signature(minimizers, hash_seed, bucket_size) {
-            table.entry(signature).or_insert_with(Vec::new).push(read_id);
+        if let Some(Some(signature)) = signatures.get(table_idx) {
+            table.entry(*signature).or_insert_with(Vec::new).push(read_id);
         }
     }
 }
 
-/// Query a read against the bucket index to find candidate representatives
-/// Returns a map of candidate_id -> number of bucket hits
+/// Query a read against the bucket index using its precomputed LSH signatures.
+/// Returns a map of candidate_id -> number of bucket hits.
 fn query_read_against_bucket_index(
     bucket_index: &BucketIndex,
-    minimizers: &[Kmer48],
-    bucket_size: usize,
+    signatures: &[Option<u64>],
 ) -> FxHashMap<usize, usize> {
-    use rayon::prelude::*;
 
     let num_tables = bucket_index.len();
 
-    // Query each table in parallel
+    // Query each table in parallel using precomputed signatures
     let hits_per_table: Vec<FxHashMap<usize, usize>> = (0..num_tables)
-        .into_par_iter()
+        .into_iter()
         .map(|table_idx| {
-            let hash_seed = table_idx as u64;
             let mut local_hits: FxHashMap<usize, usize> = FxHashMap::default();
 
-            if let Some(signature) = create_bucket_signature(minimizers, hash_seed, bucket_size) {
-                if let Some(candidates) = bucket_index[table_idx].get(&signature) {
+            if let Some(Some(signature)) = signatures.get(table_idx) {
+                if let Some(candidates) = bucket_index[table_idx].get(signature) {
                     for &candidate_id in candidates {
                         *local_hits.entry(candidate_id).or_insert(0) += 1;
                     }

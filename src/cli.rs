@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum, Args};
+use clap::{Parser, Subcommand, ValueEnum};
 use crate::constants::CLI_HEADINGS;
 
 #[derive(Parser, Debug)]
@@ -21,7 +21,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Cluster long reads of >~ 98% accuracy into ASVs (Amplicon Sequence Variants)
+    /// Turn >~ 98% accuracy long reads into ASVs (Amplicon Sequence Variants)
     #[command(name = "asv")]
     Cluster(ClusterArgs),
 
@@ -29,9 +29,13 @@ pub enum Commands {
     #[command(name = "classify")]
     Classify(ClassifyArgs),
 
-    /// Download reference databases for savont (EMU or SILVA)
+    /// Download reference databases for savont (EMU, SILVA, or GreenGenes2)
     #[command(name = "download")]
     Download(DownloadArgs),
+
+    /// K-mer bootstrap against a database for genus-level classification with the SINTAX algorithm
+    #[command(name = "sintax")]
+    Sintax(SintaxArgs),
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -56,6 +60,10 @@ pub struct ClusterArgs {
     #[arg(long, default_value_t = false, help_heading = CLI_HEADINGS[5])]
     pub fl_16s: bool,
 
+    /// PacBio HiFi amplicon preset (--min-cluster-size 6)
+    #[arg(long, default_value_t = false, help_heading = CLI_HEADINGS[5])]
+    pub hifi: bool,
+
     /// rRNA operon (~4000 bp) amplicon preset (--min-read-length 3500 --max-read-length 5000)
     #[arg(long, default_value_t = false, help_heading = CLI_HEADINGS[5])]
     pub rrna_operon: bool,
@@ -76,7 +84,7 @@ pub struct ClusterArgs {
     #[arg(long, default_value_t=98., help_heading = CLI_HEADINGS[0])]
     pub quality_value_cutoff: f64,
 
-    /// Minimum base quality to be considered high-quality for SNPmer detection. Set lower for older reads (~18 for R9). 
+    /// Minimum base quality to be considered high-quality for SNPmer detection. Set lower for older reads. 
     #[arg(long, default_value_t=25, help_heading = CLI_HEADINGS[0])]
     pub minimum_base_quality: u8,
 
@@ -96,8 +104,8 @@ pub struct ClusterArgs {
     #[arg(short, long, default_value_t=250, help_heading = CLI_HEADINGS[2])]
     pub n_depth_cutoff: usize,
 
-    /// Use homopolymer-compressed sequences for clustering and consensus generation
-    #[arg(short, long, default_value_t=false, help_heading = CLI_HEADINGS[2], hide=true)]
+    /// Use homopolymer compression for clustering and consensus generation. Helps for complex, eukaryotic genomes. 
+    #[arg(short, long, default_value_t=false, help_heading = CLI_HEADINGS[2])]
     pub use_hpc: bool,
 
 
@@ -108,10 +116,9 @@ pub struct ClusterArgs {
     /// Negative alternate posterior probability threshold (natural log scale) for base consensus. Higher = more stringent for low-quality consensuses. Do not set higher than min_depth * ln(error_rate). 
     #[arg(short, long, default_value_t=30., help_heading = CLI_HEADINGS[2])]
     pub posterior_threshold_ln: f64,
-
     
     /// Maximum number of reclustering iterations
-    #[arg(long, default_value_t=10, help_heading = CLI_HEADINGS[1])]
+    #[arg(long, default_value_t=10, help_heading = CLI_HEADINGS[1], hide = true)]
     pub max_iterations_recluster: usize,
 
     /// Use more aggressive k-mer filtering (faster but may be non-deterministic)
@@ -151,10 +158,6 @@ pub struct ClusterArgs {
     #[arg(long, hide = true)]
     pub markdown_help: bool,
 
-    // Legacy fields kept for compatibility with unused assembly code
-    #[arg(skip)]
-    pub hifi: bool,
-
     /// Try phasing heterogeneous clusters
     #[arg(long, help_heading = CLI_HEADINGS[2], hide=true)]
     pub phase_heterogeneous: bool,
@@ -170,8 +173,11 @@ pub struct ClassifyArgs {
     #[arg(short, long)]
     pub output_dir: Option<String>,
 
-    #[command(flatten)]
-    pub db_type: DatabaseType,
+    /// Path to a savont database directory.  The database type is auto-detected
+    /// from the directory name or a `.savont_db` marker file written at download
+    /// time (e.g. `databases/emu`).
+    #[arg(short = 'd', long, required = true, help_heading = "Database")]
+    pub db: String,
 
     /// Number of threads to use for parallel processing
     #[arg(short, long, default_value = "20")]
@@ -184,40 +190,59 @@ pub struct ClassifyArgs {
     /// Minimum identity threshold for genus-level classification (default: 94.5%)
     #[arg(long, default_value_t = 94.5)]
     pub genus_threshold: f64,
-}
 
-#[derive(Args, Debug, Clone)]
-#[group(required = true, multiple = false)]
-pub struct DatabaseType {
-    /// Emu database path
-    #[arg(long, help_heading = "Database")]
-    pub emu_db: Option<String>,
-
-    /// SILVA database path
-    #[arg(long, help_heading = "Database")]
-    pub silva_db: Option<String>,
+    /// Explicitly output "UNCLASSIFIED-(asv_header)" for unassigned ranks in species/genus columns instead of using "UNCLASSIFIED"
+    #[arg(long, default_value_t = false)]
+    pub detailed_unclassified: bool,
 }
 
 #[derive(Parser, Debug, Clone)]
 pub struct DownloadArgs {
-    /// Download location directory
+    /// Directory under which each database will be saved as a subdirectory
     #[arg(short, long, required = true)]
     pub location: String,
 
-    #[command(flatten)]
-    pub db_type: DownloadDatabaseType,
+    /// One or more databases to download.
+    /// Each is saved to `<location>/<keyword>` and usage is `savont classify -d <location>/<keyword>`.
+    #[arg(
+        long,
+        required = true,
+        num_args = 1..,
+        value_name = "DB",
+        value_parser = clap::builder::PossibleValuesParser::new(crate::databases::KEYWORDS),
+    )]
+    pub dbs: Vec<String>,
 }
 
-#[derive(Args, Debug, Clone)]
-#[group(required = true, multiple = true)]
-pub struct DownloadDatabaseType {
-    /// Download EMU database
-    #[arg(long)]
-    pub emu_db: bool,
+#[derive(Parser, Debug, Clone)]
+pub struct SintaxArgs {
+    /// Directory containing clustering results (must contain final_asvs.fasta)
+    #[arg(short, long, required = true)]
+    pub input_dir: String,
 
-    /// Download SILVA database
-    #[arg(long)]
-    pub silva_db: bool,
+    /// Output directory for classification results. Default: same as input directory
+    #[arg(short, long)]
+    pub output_dir: Option<String>,
+
+    /// Path to a savont database directory
+    #[arg(short = 'd', long, required = true, help_heading = "Database")]
+    pub db: String,
+
+    /// Number of threads to use for parallel processing
+    #[arg(short, long, default_value = "20")]
+    pub threads: usize,
+
+    /// Minimum bootstrap confidence threshold for genus and all higher ranks
+    #[arg(long, default_value_t = 0.8)]
+    pub min_bootstrap: f64,
+
+    /// Number of bootstrap iterations
+    #[arg(long, default_value_t = 100)]
+    pub n_iter: usize,
+
+    /// Explicitly output "UNCLASSIFIED-(asv_header)" for unassigned ranks in species/genus columns instead of using "UNCLASSIFIED"
+    #[arg(long, default_value_t = false)]
+    pub detailed_unclassified: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, ValueEnum)]

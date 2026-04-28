@@ -64,6 +64,9 @@ pub const MAX_ALLOWABLE_SNPMER_ERROR_DIVIDER: usize = 200;
 
 pub const DEDUP_SNPMERS: bool = true;
 
+pub const LSH_NUM_TABLES: usize = 20;
+pub const LSH_BUCKET_SIZE: usize = 3;
+
 
 pub const CLI_HEADINGS: [&str; 6] = [
     "Input/Output Options",

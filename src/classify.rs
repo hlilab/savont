@@ -123,12 +123,25 @@ fn collect_best_mappings(
     args: &cli::ClassifyArgs,
 ) -> Vec<(usize, String, f64, u32, usize, String, String)> {
 
-    let aligner = minimap2::Aligner::builder()
-        .map_ont()
-        .with_index_threads(args.threads)
-        .with_cigar()
-        .with_index(db.fasta_path.to_str().unwrap(), None)
-        .expect("Failed to create aligner with database index");
+    let fasta_str = db.fasta_path.to_str().unwrap();
+    let mmi_path = format!("{}.mmi", fasta_str);
+    let aligner = if Path::new(&mmi_path).exists() {
+        log::info!("Loading pre-built minimap2 index: {}", mmi_path);
+        minimap2::Aligner::builder()
+            .map_ont()
+            .with_index_threads(args.threads)
+            .with_cigar()
+            .with_index(&mmi_path, None)
+            .expect("Failed to load minimap2 index")
+    } else {
+        log::info!("Building minimap2 index from {} (saving to {})", fasta_str, mmi_path);
+        minimap2::Aligner::builder()
+            .map_ont()
+            .with_index_threads(args.threads)
+            .with_cigar()
+            .with_index(fasta_str, Some(&mmi_path))
+            .expect("Failed to build minimap2 index")
+    };
 
     log::info!("Aligning {} consensus sequences to database", consensus_sequences.len());
 
@@ -156,11 +169,7 @@ fn collect_best_mappings(
 
                                 if let Some(db_header) = &mapping.target_name {
                                     // Extract ID based on database type
-                                    let db_key = if args.db_type.silva_db.is_some() {
-                                        taxonomy::extract_silva_accession_from_header(db_header)
-                                    } else {
-                                        taxonomy::extract_tax_id_from_header(db_header)
-                                    };
+                                    let db_key = (db.extract_key)(db_header);
 
                                     if let Some(key) = db_key {
                                         if db.taxonomy.contains_key(&key) {
@@ -190,8 +199,15 @@ pub fn classify(args: &cli::ClassifyArgs, db: &taxonomy::Database) {
     }
 
     log::info!("Loading consensus sequences from {}", input_fasta.display());
-    let consensus_sequences = taxonomy::load_fasta_with_needletail(&input_fasta)
-        .expect("Failed to load consensus sequences");
+    let consensus_sequences_result = taxonomy::load_fasta_with_needletail(&input_fasta);
+    let consensus_sequences = match consensus_sequences_result {
+        Ok(seqs) => seqs,
+        Err(e) => {
+            log::warn!("WARN [savont] Failed to load consensus sequences: {}. Either the input FASTA is empty or there was an error during parsing.", e);
+            Vec::new()
+        }
+    };
+    
     log::info!("Loaded {} consensus sequences", consensus_sequences.len());
 
     // Step 3: Build aligner using database FASTA file
@@ -276,6 +292,7 @@ pub fn classify(args: &cli::ClassifyArgs, db: &taxonomy::Database) {
                     args.species_threshold,
                     args.genus_threshold,
                     &asv_header,
+                    args.detailed_unclassified,
                 );
                 secondary_classifications.push(taxonomy::AsvClassification {
                     asv_id: asv_id.clone(),
@@ -306,6 +323,7 @@ pub fn classify(args: &cli::ClassifyArgs, db: &taxonomy::Database) {
                 args.species_threshold,
                 args.genus_threshold,
                 &asv_header,
+                args.detailed_unclassified,
             );
 
             let asv_depth = asv_depths[asv_idx];

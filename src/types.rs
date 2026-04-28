@@ -40,6 +40,7 @@ use std::hash::Hash;
 
 use crate::constants::ID_THRESHOLD_ITERS;
 use crate::constants::MAX_GAP_CHAINING;
+use crate::constants::{LSH_NUM_TABLES, LSH_BUCKET_SIZE};
 
 pub type NodeMap<K,V> = BTreeMap<K,V>;
 pub type Kmer64 = u64;
@@ -401,6 +402,7 @@ pub struct TwinRead {
     pub split_start: u32,
     pub outer: bool,
     pub snpmer_id_threshold: Option<f64>,
+    pub lsh_signatures: Vec<Option<u64>>,
 }
 
 
@@ -704,6 +706,38 @@ impl TwinRead{
         retain_vec_indices(&mut self.snpmer_positions, &positions);
         //self.snpmer_kmers.shrink_to_fit();
         self.snpmer_positions.shrink_to_fit();
+    }
+
+    /// Compute and store the LSH bucket signatures for all hash tables.
+    /// Call this after minimizer filtering is complete (i.e., after retain_mini_indices).
+    pub fn compute_lsh_signatures(&mut self) {
+        use fxhash::FxHasher64;
+        use std::hash::Hasher;
+
+        let minimizers = self.minimizer_kmers();
+        self.lsh_signatures = (0..LSH_NUM_TABLES)
+            .map(|table_idx| {
+                let hash_seed = table_idx as u64;
+                if minimizers.len() < LSH_BUCKET_SIZE {
+                    return None;
+                }
+                let mut hashed: Vec<(u64, Kmer48)> = minimizers
+                    .iter()
+                    .map(|&kmer| {
+                        let mut hasher = FxHasher64::default();
+                        hasher.write_u64(hash_seed);
+                        hasher.write_u64(kmer.to_u64());
+                        (hasher.finish(), kmer)
+                    })
+                    .collect();
+                hashed.sort_by_key(|x| x.0);
+                let mut signature: u64 = 0;
+                for i in 0..LSH_BUCKET_SIZE {
+                    signature ^= hashed[i].1.to_u64().wrapping_mul(i as u64 + 1);
+                }
+                Some(signature)
+            })
+            .collect();
     }
 
     pub fn blockmers_vec(&self) -> Vec<(u32, u64)> {

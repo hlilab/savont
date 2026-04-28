@@ -194,7 +194,7 @@ fn generate_consensus_poa(
     sequences: &[Vec<u8>],
     qualities: &[Vec<u8>],
     _coverage_threshold: i32,
-    cluster_idx: usize,
+    _cluster_idx: usize,
 ) -> Vec<u8> {
     if sequences.is_empty() {
         return Vec::new();
@@ -213,10 +213,6 @@ fn generate_consensus_poa(
     }
 
     let consensus = graph.generate_consensus();
-
-    let msa_seqs = &graph.generate_msa()[0..5];
-    let msa_string = msa_seqs.join("\n");
-    log::trace!("Final Consensus {} has length {} with MSA\n{}", cluster_idx, consensus.len(), msa_string);
 
     return consensus.into_bytes();
 
@@ -1658,6 +1654,8 @@ pub fn merge_similar_consensuses(
         new_clusters.len(),
         new_consensuses.len()
     );
+
+    new_consensuses.sort_by(|a, b| b.depth.cmp(&a.depth)); // Sort by depth descending
 
 
     let final_file = temp_dir.join("final_clusters_merged.tsv");

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use flate2::read::GzDecoder;
 
 /// Represents a taxonomic entry from the database
 #[derive(Debug, Clone)]
@@ -24,6 +25,8 @@ pub struct TaxonomyEntry {
 pub struct Database {
     pub fasta_path: PathBuf,
     pub taxonomy: HashMap<String, TaxonomyEntry>,
+    /// Extracts the taxonomy-map lookup key from a minimap2 target-name string.
+    pub extract_key: fn(&str) -> Option<String>,
 }
 
 impl Database {
@@ -53,6 +56,7 @@ impl Database {
         Ok(Database {
             fasta_path,
             taxonomy,
+            extract_key: extract_tax_id_from_header,
         })
     }
 
@@ -134,6 +138,7 @@ impl Database {
         Ok(Database {
             fasta_path,
             taxonomy,
+            extract_key: extract_silva_accession_from_header,
         })
     }
 
@@ -198,6 +203,210 @@ impl Database {
 
         Ok(taxonomy)
     }
+
+    /// Load GTDB r232 SSU database from a directory containing ssu_all_r232.fna.gz
+    pub fn load_gtdb(db_dir: &Path) -> Result<Self, std::io::Error> {
+        let fasta_path = std::fs::read_dir(db_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map_or(false, |n| n.ends_with(".fna.gz") || n.ends_with(".fna") || n.ends_with(".fa.gz") || n.ends_with(".fasta.gz"))
+            })
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No .fna.gz FASTA file found in {}", db_dir.display()),
+            ))?;
+
+        log::info!("Loading GTDB taxonomy from FASTA headers: {}", fasta_path.display());
+        let taxonomy = Self::load_gtdb_taxonomy_from_fasta(&fasta_path)?;
+        log::info!("Loaded {} GTDB taxonomy entries", taxonomy.len());
+
+        Ok(Database { fasta_path, taxonomy, extract_key: extract_gtdb_key_from_header })
+    }
+
+    /// Parse taxonomy from GTDB FASTA headers.
+    /// Header format: >REF_NAME d__Domain;p__Phylum;...;s__Genus species [location=...] ...
+    fn load_gtdb_taxonomy_from_fasta(path: &Path) -> Result<HashMap<String, TaxonomyEntry>, std::io::Error> {
+        let file = File::open(path)?;
+        let reader: Box<dyn BufRead> = if path.to_str().map_or(false, |s| s.ends_with(".gz")) {
+            Box::new(BufReader::new(GzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+
+        let mut taxonomy = HashMap::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if !line.starts_with('>') {
+                continue;
+            }
+            let header = &line[1..];
+            let mut tokens = header.splitn(2, ' ');
+            let ref_name = match tokens.next() {
+                Some(n) if !n.is_empty() => n.to_string(),
+                _ => continue,
+            };
+            let rest = tokens.next().unwrap_or("");
+
+            // Taxonomy string ends at first " [" annotation
+            let tax_str = if let Some(idx) = rest.find(" [") {
+                &rest[..idx]
+            } else {
+                rest.trim()
+            };
+
+            let mut superkingdom = String::new();
+            let mut phylum = String::new();
+            let mut class = String::new();
+            let mut order = String::new();
+            let mut family = String::new();
+            let mut genus = String::new();
+            let mut species = String::new();
+
+            for level in tax_str.split(';') {
+                let level = level.trim();
+                if let Some(val) = level.strip_prefix("d__") {
+                    superkingdom = val.to_string();
+                } else if let Some(val) = level.strip_prefix("p__") {
+                    phylum = val.to_string();
+                } else if let Some(val) = level.strip_prefix("c__") {
+                    class = val.to_string();
+                } else if let Some(val) = level.strip_prefix("o__") {
+                    order = val.to_string();
+                } else if let Some(val) = level.strip_prefix("f__") {
+                    family = val.to_string();
+                } else if let Some(val) = level.strip_prefix("g__") {
+                    genus = val.to_string();
+                } else if let Some(val) = level.strip_prefix("s__") {
+                    species = val.to_string();
+                }
+            }
+
+            let entry = TaxonomyEntry {
+                tax_id: ref_name.clone(),
+                species,
+                genus,
+                family,
+                order,
+                class,
+                phylum,
+                clade: String::new(),
+                superkingdom,
+                subspecies: String::new(),
+                species_subgroup: String::new(),
+                species_group: String::new(),
+            };
+            taxonomy.insert(ref_name, entry);
+        }
+
+        Ok(taxonomy)
+    }
+
+    /// Load GreenGenes2 database from a directory containing gg2_*.fa.gz
+    /// Header format: >d__Domain;p__Phylum;...;s__epithet;  (taxonomy IS the header)
+    pub fn load_gg2(db_dir: &Path) -> Result<Self, std::io::Error> {
+        let fasta_path = std::fs::read_dir(db_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map_or(false, |n| {
+                        n.ends_with(".fa.gz") || n.ends_with(".fasta.gz") || n.ends_with(".fa")
+                    })
+            })
+            .ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No .fa.gz file found in {}", db_dir.display()),
+            ))?;
+
+        log::info!("Loading GreenGenes2 taxonomy from FASTA headers: {}", fasta_path.display());
+        let taxonomy = Self::load_gg2_taxonomy_from_fasta(&fasta_path)?;
+        log::info!("Loaded {} GreenGenes2 taxonomy entries", taxonomy.len());
+
+        Ok(Database { fasta_path, taxonomy, extract_key: extract_gg2_key_from_header })
+    }
+
+    /// Parse GreenGenes2 taxonomy from FASTA headers.
+    /// Header format: >d__Domain;p__Phylum;c__Class;o__Order;f__Family;g__Genus;s__epithet;
+    /// The full header string (without '>') is used as the lookup key.
+    fn load_gg2_taxonomy_from_fasta(path: &Path) -> Result<HashMap<String, TaxonomyEntry>, std::io::Error> {
+        let file = File::open(path)?;
+        let reader: Box<dyn BufRead> = if path.to_str().map_or(false, |s| s.ends_with(".gz")) {
+            Box::new(BufReader::new(GzDecoder::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+
+        let mut taxonomy = HashMap::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if !line.starts_with('>') { continue; }
+
+            // Key = full header without '>'
+            let key = line[1..].trim().to_string();
+            if key.is_empty() { continue; }
+
+            let mut superkingdom = String::new();
+            let mut phylum = String::new();
+            let mut class = String::new();
+            let mut order = String::new();
+            let mut family = String::new();
+            let mut genus = String::new();
+            let mut species_epithet = String::new();
+
+            for level in key.split(';') {
+                let level = level.trim();
+                if let Some(val) = level.strip_prefix("d__") {
+                    superkingdom = val.to_string();
+                } else if let Some(val) = level.strip_prefix("p__") {
+                    phylum = val.to_string();
+                } else if let Some(val) = level.strip_prefix("c__") {
+                    class = val.to_string();
+                } else if let Some(val) = level.strip_prefix("o__") {
+                    order = val.to_string();
+                } else if let Some(val) = level.strip_prefix("f__") {
+                    family = val.to_string();
+                } else if let Some(val) = level.strip_prefix("g__") {
+                    genus = val.to_string();
+                } else if let Some(val) = level.strip_prefix("s__") {
+                    species_epithet = val.to_string();
+                }
+            }
+
+            // Build full species name from genus + epithet when both present
+            let species = if !genus.is_empty() && !species_epithet.is_empty() {
+                format!("{} {}", genus, species_epithet)
+            } else {
+                species_epithet
+            };
+
+            const UNANNOTATED: &str = "Greengenes_unannotated";
+            let fill = |s: String| if s.is_empty() { UNANNOTATED.to_string() } else { s };
+
+            let entry = TaxonomyEntry {
+                tax_id: key.clone(),
+                species:      fill(species),
+                genus:        fill(genus),
+                family:       fill(family),
+                order:        fill(order),
+                class:        fill(class),
+                phylum:       fill(phylum),
+                clade: String::new(),
+                superkingdom: fill(superkingdom),
+                subspecies: String::new(),
+                species_subgroup: String::new(),
+                species_group: String::new(),
+            };
+            taxonomy.insert(key, entry);
+        }
+
+        Ok(taxonomy)
+    }
 }
 
 /// Represents the classification result for a single ASV
@@ -238,8 +447,13 @@ impl TaxonomyAssignment {
         species_threshold: f64,
         genus_threshold: f64,
         asv_header: &str,
+        detailed_unclassified: bool,
     ) -> Self {
-        let unclassified_marker = format!("UNCLASSIFIED-({})", asv_header);
+        let unclassified_marker = if detailed_unclassified {
+            format!("UNCLASSIFIED-({})", asv_header)
+        } else {
+            "UNCLASSIFIED".to_string()
+        };
 
         if identity >= species_threshold {
             // Species-level classification
@@ -328,6 +542,22 @@ pub fn extract_silva_accession_from_header(header: &str) -> Option<String> {
     accession_part.split('.').next().map(|s| s.to_string())
 }
 
+/// Extract reference name from GTDB FASTA header (the full first token)
+/// Format: >RS_GCF_002517985.1~NZ_NOCN01000152.1 d__Bacteria;...
+/// Returns: RS_GCF_002517985.1~NZ_NOCN01000152.1
+pub fn extract_gtdb_key_from_header(header: &str) -> Option<String> {
+    let header = header.trim_start_matches('>');
+    header.split_whitespace().next().map(|s| s.to_string())
+}
+
+/// Extract key from GreenGenes2 FASTA header.
+/// Format: >d__Bacteria;p__...;s__epithet;  (no separate ref name — taxonomy IS the header)
+/// Returns the full header string (trimmed), which is the taxonomy map key.
+pub fn extract_gg2_key_from_header(header: &str) -> Option<String> {
+    let header = header.trim_start_matches('>').trim();
+    if header.is_empty() { None } else { Some(header.to_string()) }
+}
+
 /// Write species-level taxonomy abundance table to TSV file
 pub fn write_species_abundance(
     classifications: &[AsvClassification],
@@ -338,7 +568,7 @@ pub fn write_species_abundance(
     // Write header
     writeln!(
         file,
-        "tax_id\tabundance\tspecies\tgenus\tfamily\torder\tclass\tphylum\tclade\tsuperkingdom"
+        "abundance\tspecies\tgenus\tfamily\torder\tclass\tphylum\tclade\tsuperkingdom"
     )?;
 
     // Aggregate abundances by taxonomy
@@ -348,7 +578,7 @@ pub fn write_species_abundance(
         if let Some(ref taxonomy) = classification.taxonomy {
             // Create a unique key for this taxonomic assignment (species-level)
             let key = format!(
-                "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                "{}|{}|{}|{}|{}|{}|{}|{}",
                 taxonomy.species,
                 taxonomy.genus,
                 taxonomy.family,
@@ -357,7 +587,6 @@ pub fn write_species_abundance(
                 taxonomy.phylum,
                 taxonomy.clade,
                 taxonomy.superkingdom,
-                taxonomy.tax_id
             );
 
             taxonomy_abundances
@@ -375,8 +604,7 @@ pub fn write_species_abundance(
     for (_, (taxonomy, abundance)) in sorted_taxa {
         writeln!(
             file,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            taxonomy.tax_id,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             abundance,
             taxonomy.species,
             taxonomy.genus,

@@ -181,7 +181,8 @@ pub fn detect_chimeras(
                         let total_match = left_len + right_len;
                         let coverage_fraction = total_match as f64 / query_len as f64;
 
-                        if coverage_fraction >= (0.9 * parent_similarity).min(0.8) && (coverage_fraction < 1.5 || (parent_similarity < 0.99 && coverage_fraction < 1.8)) {
+                        if coverage_fraction >= (0.9 * parent_similarity).min(0.8) 
+                        && (coverage_fraction < 1.5 || (parent_similarity < 0.99 && coverage_fraction < 1.8)) {
                             log::debug!(
                                 "Detected chimera: consensus {} (depth {}) = left_parent {} + right_parent {} (coverage: {:.2}%, parent similarity: {:.2}%)",
                                 consensuses[query_idx].id, query_depth, consensuses[left_ref].id, consensuses[right_ref].id, coverage_fraction * 100.0, parent_similarity * 100.0
@@ -411,22 +412,33 @@ fn calculate_pairwise_similarities(
         let seq_i = cons_i.decompressed_sequence.as_ref()
             .expect("Consensus sequence must be decompressed before chimera detection");
 
+        // Align cons_i to cons_j (using decompressed sequences)
+            let aligner = Aligner::builder()
+                .lrhq()
+                .with_cigar()
+                .with_seq(seq_i)
+                .expect("Failed to create aligner");
+
+        let depth_i = cons_i.depth;
+
         for (j, cons_j) in consensuses.iter().enumerate() {
             if i >= j {
                 continue; // Only calculate once per pair
             }
 
+            let depth_j = cons_j.depth;
+
+            // Only calculate similarity for pairs that have sufficient depth difference 
+            // (to save time, and because similar-depth consensuses are unlikely to be chimeras of each other)
+            if depth_i < depth_j * 5 {
+                continue;
+            }
+
             let seq_j = cons_j.decompressed_sequence.as_ref()
                 .expect("Consensus sequence must be decompressed before chimera detection");
 
-            // Align cons_i to cons_j (using decompressed sequences)
-            let aligner = Aligner::builder()
-                .lrhq()
-                .with_cigar()
-                .with_seq(seq_j)
-                .expect("Failed to create aligner");
-
-            if let Ok(mappings) = aligner.map(seq_i, false, false, None, None, None) {
+            
+            if let Ok(mappings) = aligner.map(seq_j, false, false, None, None, None) {
                 if let Some(best_mapping) = mappings.first() {
                     if let Some(ref alignment) = best_mapping.alignment {
                         // Calculate identity as 1 - (NM / alignment_length)
@@ -439,7 +451,7 @@ fn calculate_pairwise_similarities(
                             0.0
                         };
 
-                        similarities.lock().unwrap().insert((i, j), identity);
+                        similarities.lock().unwrap().insert((j, i), identity);
                     }
                 }
             }

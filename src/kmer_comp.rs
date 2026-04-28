@@ -203,6 +203,7 @@ pub fn twin_reads_from_snpmers(kmer_info: &mut KmerGlobalInfo, blockmer_info: &m
                                 let mut twin_read = twin_read.unwrap();
                                 twin_read.retain_mini_indices(solid_mini_indices);
                                 twin_read.retain_snpmer_indices(solid_snpmer_indices);
+                                twin_read.compute_lsh_signatures();
 
                                 let mut vec = twrv.lock().unwrap();
                                 vec.push(twin_read);

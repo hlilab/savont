@@ -623,6 +623,7 @@ pub fn get_twin_read_syncmer(
         dna_seq = dna_seq_opt.unwrap();
     }
 
+
     Some(TwinRead{
         //snpmer_kmers,
         snpmer_positions: snpmer_positions_final,
@@ -648,6 +649,7 @@ pub fn get_twin_read_syncmer(
         split_chimera: false,
         split_start: 0,
         snpmer_id_threshold: None,
+        lsh_signatures: vec![],
     })
 
 }

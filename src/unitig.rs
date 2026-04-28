@@ -3368,6 +3368,7 @@ mod tests {
                     median_depth: Some(2. * min_depth),
                     split_chimera: false,
                     snpmer_id_threshold: None,
+                    lsh_signatures: vec![],
                 };
 
                 self.corresponding_reads.push(generic_read);

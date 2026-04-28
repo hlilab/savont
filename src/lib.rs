@@ -12,7 +12,9 @@ pub mod asv_cluster;
 pub mod alignment;
 pub mod chimera;
 pub mod taxonomy;
+pub mod databases;
 pub mod classify;
+pub mod sintax;
 pub mod download;
 
 //pub mod cbloom;
