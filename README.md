@@ -9,7 +9,7 @@ Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow)
 
 ## Why savont?
 
-- Savont can resolve ASVs that differ by a single nucleotide. This differs from existing long-read workflows that do fuzzy OTU-like clustering.
+- Savont can resolve ASVs that differ by a single nucleotide, **even for nanopore reads.** This differs from existing nanopore workflows for OTU-like clustering.
 - For ONT amplicons, savont requires ~10x less depth to generate ASVs compared to DADA2 / UNOISE.
 - Savont also has built-in support for full taxonomic profiling (fastq -> abundance table) for several rRNA databases. 
 
