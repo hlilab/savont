@@ -18,7 +18,7 @@ Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow)
 > For lower quality reads (e.g. R9.4 ONT data) savont may **not** be useful.
 
 <p align="center">
-    <img alt="github-diagram" src="https://github.com/user-attachments/assets/bf200337-2208-4336-9c5c-6a164e57b3ec" width="90%" />
+    <img width="90%" alt="github-diagram" src="https://github.com/user-attachments/assets/c0d9e356-ee1d-4d60-a217-c050e5abd0dc" />
 </p>
 
 ## Preliminary results
