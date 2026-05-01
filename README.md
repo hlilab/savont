@@ -7,6 +7,10 @@
 
 Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow). Savont instead follows the Reads -> ASV -> Classification paradigm (just like DADA2, but for noisier long reads).
 
+<centering>
+<img alt="github-diagram" src="https://github.com/user-attachments/assets/bf200337-2208-4336-9c5c-6a164e57b3ec" width="75%" class="center-img" />
+</centering>
+
 ## Why savont?
 
 - Savont can resolve ASVs that differ by a single nucleotide. This differs from existing long-read workflows that do fuzzy OTU-like clustering.
