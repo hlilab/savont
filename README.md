@@ -65,7 +65,10 @@ mamba install -c bioconda savont
 ### Step 1: Generate ASVs from reads
 
 > [!NOTE]
-> Savont filters reads based on length and quality. However, savont does not do adapter/primer trimming. Please trim your reads with e.g. [cutadapt](https://cutadapt.readthedocs.io/en/stable/) first. 
+> Savont filters reads based on length and quality. However, savont does not do adapter/primer trimming. Please trim your reads with e.g. [cutadapt](https://cutadapt.readthedocs.io/en/stable/) first.
+
+Default savont parameters assume ONT / HiFi full-length 16S rRNA sequencing with trimmed reads from cutadapt. See below for parameter choices if this is not the case. 
+ 
 ```sh
 # Full-length 16S rRNA reads -> ASVs
 savont asv 16s_full-length.fastq.gz -o savont-out -t 20 
