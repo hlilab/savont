@@ -5,17 +5,21 @@
 - Oxford Nanopore (ONT) R10.4 sequencing (preferably with SUP basecalling)
 - PacBio HiFi sequencing
 
-Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow). Savont instead follows the Reads -> ASV -> Classification paradigm (just like DADA2, but for long reads).
+Savont differs from mapping-based approaches (e.g. Emu or ONT's epi2me workflow). Savont instead follows the Reads -> ASV -> Classification paradigm (just like DADA2, but for noisier long reads).
 
 ## Why savont?
 
-- Savont can resolve ASVs that differ by a single nucleotide. This differs from existing long-read workflows that do fuzzy OTU-like clustering.
+- Savont can resolve ASVs that differ by a single nucleotide, **even for nanopore reads.** This differs from existing nanopore workflows for OTU-like clustering.
 - For ONT amplicons, savont requires ~10x less depth to generate ASVs compared to DADA2 / UNOISE.
 - Savont also has built-in support for full taxonomic profiling (fastq -> abundance table -> QIIME) for several rRNA databases. 
 
 > [!NOTE]
 > Savont is optimized for long reads with >98% accuracy. ONT's R10.4 reads with SUP basecalling or PacBio HiFi are preferred.
 > For lower quality reads (e.g. R9.4 ONT data) savont may **not** be useful.
+
+<p align="center">
+    <img width="90%" alt="github-diagram" src="https://github.com/user-attachments/assets/c0d9e356-ee1d-4d60-a217-c050e5abd0dc" />
+</p>
 
 ## Preliminary results
 
@@ -77,7 +81,10 @@ savont merge -i savont-out1 savont-out2 -o merged_output
 ## Generate ASVs from reads (`savont asv`)
 
 > [!NOTE]
-> Savont filters reads based on length and quality. However, savont does not do adapter/primer trimming. Please trim your reads with e.g. [cutadapt](https://cutadapt.readthedocs.io/en/stable/) first. 
+> Savont filters reads based on length and quality. However, savont does not do adapter/primer trimming. Please trim your reads with e.g. [cutadapt](https://cutadapt.readthedocs.io/en/stable/) first.
+
+Default savont parameters assume ONT / HiFi full-length 16S rRNA sequencing with trimmed reads from cutadapt. See below for parameter choices if this is not the case. 
+ 
 ```sh
 # Full-length 16S rRNA reads -> ASVs
 savont asv 16s_full-length.fastq.gz -o savont-out -t 20 
