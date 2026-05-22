@@ -160,7 +160,7 @@ savont sintax -i savont-out -d databases/silva-138.2 --min-bootstrap 0.70
 
 ### Classification Output (`savont classify`)
 
-The `savont classify` command produces three output files similar to Emu:
+The `savont classify` command produces three output files:
 
 #### 1. species_abundance.tsv / genus_abundance.tsv
 
@@ -218,7 +218,7 @@ savont merge \
 ```
 
 > [!NOTE]
-> `--relabel` labels are applied in the same order as `--input-dirs`. Savont will warn loudly if duplicate sample names are detected.
+> Make sure to use `--relabel` if you have duplicate sample names. 
 
 #### Merge outputs
 
@@ -296,7 +296,7 @@ FORTHCOMING WORK.
 
 3. McDonald, D., Jiang, Y., Balaban, M. et al. Greengenes2 unifies microbial data in a single reference tree. Nat Biotechnol 42, 715–718 (2024).
 
-**If you use the SINTAX algorithm**: cite Edgar, Robert C. "SINTAX: a simple non-Bayesian taxonomy classifier for 16S and ITS sequences." biorxiv (2016): 074161.
+**If you use the SINTAX algorithm please cite**: Edgar, Robert C. "SINTAX: a simple non-Bayesian taxonomy classifier for 16S and ITS sequences." biorxiv (2016): 074161.
 
 ## License
 
